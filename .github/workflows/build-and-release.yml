@@ -142,12 +142,14 @@ jobs:
           host: 35.211.220.234
           username: ${{ secrets.GCP_USERNAME }}
           key: ${{ secrets.GCP_SSH_KEY }}
-          port: 8080 # Usually 22 for SSH, but set to 8080 based on your prompt details. Change to 22 if 8080 is the app port.
+          port: 22
           script: |
-            # Update these paths and commands to match your Debian 12 environment
-            APP_DIR="/opt/local-gpss" 
+            APP_DIR="/home/volkan_trkt"
             
             cd $APP_DIR
+            
+            # Stop the service to prevent "Text file busy" errors
+            sudo systemctl stop local-gpss
             
             # Download the direct artifact from the latest automated tag
             wget -qO linux64.zip https://github.com/volkanturkut/local-gpss/releases/download/${{ github.ref_name }}/linux64.zip
@@ -155,8 +157,11 @@ jobs:
             # Unzip over existing files
             unzip -o linux64.zip
             
-            # Restart the service (Update this command if you use tmux/screen instead of systemd)
-            sudo systemctl restart local-gpss
+            # Re-apply executable permissions
+            chmod +x local-gpss
+            
+            # Start the service back up
+            sudo systemctl start local-gpss
             
             # Clean up artifact
             rm linux64.zip
