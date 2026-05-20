@@ -3,8 +3,8 @@ name: Build and Release
 on:
   push:
     tags:
-      - "v*"  # Run only when a tag is pushed (e.g., v1.0.3)
-  workflow_dispatch:  # Allow manual triggering
+      - "v*"
+  workflow_dispatch:
 
 jobs:
   build:
@@ -85,7 +85,6 @@ jobs:
           -buildvcs=false \
           -trimpath
 
-
       - name: Copy GpssConsole to the bin folder
         shell: bash
         run: |
@@ -117,7 +116,7 @@ jobs:
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
-          path: artifacts # In the future if they add the ability to skip decompressing, I'll remove the zip step above
+          path: artifacts 
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -126,6 +125,38 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: Release ${{ github.ref_name }}
           tag_name: ${{ github.ref }}
-          body: "Fill me in before releasing this."
-          draft: true
+          body: "Automated Release Pipeline Triggered."
+          draft: false
           prerelease: false
+
+  deploy:
+    name: Deploy to GCP
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 35.211.220.234
+          username: ${{ secrets.GCP_USERNAME }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: 8080 # Usually 22 for SSH, but set to 8080 based on your prompt details. Change to 22 if 8080 is the app port.
+          script: |
+            # Update these paths and commands to match your Debian 12 environment
+            APP_DIR="/opt/local-gpss" 
+            
+            cd $APP_DIR
+            
+            # Download the direct artifact from the latest automated tag
+            wget -qO linux64.zip https://github.com/volkanturkut/local-gpss/releases/download/${{ github.ref_name }}/linux64.zip
+            
+            # Unzip over existing files
+            unzip -o linux64.zip
+            
+            # Restart the service (Update this command if you use tmux/screen instead of systemd)
+            sudo systemctl restart local-gpss
+            
+            # Clean up artifact
+            rm linux64.zip
