@@ -37,4 +37,4 @@ and PKSM likely won't see too many updates for the foreseeable future.
 Rather than just completely shut down and leave everyone in the dark, I threw this together, it'll essentially act as a
 local backend for PKSM,
 you definitely should not expose this to the public internet, it isn't built with security in mind nor is it really
-designed to be hit by many users at once. 
+designed to be hit by many users at once.
