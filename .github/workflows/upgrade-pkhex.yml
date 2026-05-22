@@ -2,7 +2,7 @@ name: Upgrade PKHeX DLLs
 
 on:
   schedule:
-    - cron: '0 2 * * *' # Runs daily at 2 AM UTC (after the upstream sync)
+    - cron: '0 2 * * *'
   workflow_dispatch:
 
 permissions:
@@ -18,77 +18,122 @@ jobs:
         with:
           token: ${{ secrets.PAT_TOKEN }}
 
+      - name: Check for upstream source changes
+        id: check_upstream
+        shell: bash
+        run: |
+          # 1. Get the latest commit SHAs directly from the upstream branches
+          PKHEX_SHA=$(git ls-remote https://github.com/kwsch/PKHeX.git refs/heads/master | awk '{ print $1}')
+          PLUGINS_SHA=$(git ls-remote https://github.com/santacrab2/PKHeX-Plugins.git refs/heads/cherrytree | awk '{ print $1}')
+          
+          NEW_SHAS="${PKHEX_SHA}_${PLUGINS_SHA}"
+          echo "Latest upstream SHAs: $NEW_SHAS"
+          
+          mkdir -p GpssConsole/deps
+          
+          # 2. Compare against the tracking file from the last successful build
+          if [ -f "GpssConsole/deps/upstream_shas.txt" ]; then
+            OLD_SHAS=$(cat GpssConsole/deps/upstream_shas.txt)
+            if [ "$OLD_SHAS" == "$NEW_SHAS" ]; then
+              echo "No upstream changes detected. Stopping workflow."
+              echo "changed=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+          
+          # 3. Changes found! Update the tracking file and proceed
+          echo "Changes detected! Proceeding with DLL rebuild..."
+          echo "$NEW_SHAS" > GpssConsole/deps/upstream_shas.txt
+          echo "changed=true" >> $GITHUB_OUTPUT
+
       - name: Checkout PKHeX Plugins
+        if: steps.check_upstream.outputs.changed == 'true'
         run: |
           git clone -q --depth=5 --branch=cherrytree https://github.com/santacrab2/PKHeX-Plugins.git ${{ github.workspace }}/PKHeX-Plugins
 
       - name: Checkout PKHeX
+        if: steps.check_upstream.outputs.changed == 'true'
         run: |
           git clone -q --depth=5 --branch=master https://github.com/kwsch/PKHeX.git ${{ github.workspace }}/PKHeX
 
       - name: Setup .NET 10.0
+        if: steps.check_upstream.outputs.changed == 'true'
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Install NuGet
+        if: steps.check_upstream.outputs.changed == 'true'
         run: |
           nuget update -self
           nuget install nuget.commandline -OutputDirectory .nuget -ExcludeVersion
           echo "$(pwd)/.nuget/nuget.commandline/tools" >> $GITHUB_PATH
 
       - name: Add msbuild to PATH
+        if: steps.check_upstream.outputs.changed == 'true'
         uses: microsoft/setup-msbuild@v3
 
       - name: Restore NuGet dependencies for PKHeX-Plugins
+        if: steps.check_upstream.outputs.changed == 'true'
         run: nuget restore ${{ github.workspace }}/PKHeX-Plugins/PKHeX-Plugins.sln
 
       - name: Restore NuGet dependencies for PKHeX
+        if: steps.check_upstream.outputs.changed == 'true'
         run: nuget restore ${{ github.workspace }}/PKHeX/PKHeX.sln -NoCache
 
       - name: Build PKHeX.Core
+        if: steps.check_upstream.outputs.changed == 'true'
         run: |
           msbuild ${{ github.workspace }}/PKHeX/PKHeX.Core/PKHeX.Core.csproj /p:Configuration=Release /p:Platform="Any CPU"
 
       - name: Copy PKHeX.Core.dll to NuGet cache
+        if: steps.check_upstream.outputs.changed == 'true'
         shell: powershell
         run: |
           $nugetver = (Get-ChildItem "$env:UserProfile/.nuget/packages/pkhex.core" | Sort-Object -Property LastWriteTime -Descending)[0].Name
           Copy-Item "${{ github.workspace }}/PKHeX/PKHeX.Core/bin/Any CPU/Release/net10.0/PKHeX.Core.dll" "$env:UserProfile/.nuget/packages/pkhex.core/$nugetver/lib/net10.0"
 
       - name: Build PKHeX.Core.AutoMod
+        if: steps.check_upstream.outputs.changed == 'true'
         run: |
           msbuild ${{ github.workspace }}/PKHeX-Plugins/PKHeX.Core.AutoMod/PKHeX.Core.AutoMod.csproj /p:Configuration=Release /p:Platform="Any CPU"
 
       - name: Prepare dlls
+        if: steps.check_upstream.outputs.changed == 'true'
         run: |
           xcopy "${{ github.workspace }}\PKHeX-Plugins\PKHeX.Core.AutoMod\bin\Any CPU\Release\net10.0\PKHeX.Core.AutoMod.dll" ${{ github.workspace }}\GpssConsole\deps /Y
           xcopy "${{ github.workspace }}\PKHeX\PKHeX.Core\bin\Any CPU\Release\net10.0\PKHeX.Core.dll" ${{ github.workspace }}\GpssConsole\deps /Y
 
       - name: Remove other repo directories
+        if: steps.check_upstream.outputs.changed == 'true'
         run: |
           Remove-Item -Recurse -Force ${{ github.workspace }}/PKHeX-Plugins
           Remove-Item -Recurse -Force ${{ github.workspace }}/PKHeX
 
       - name: Restore NuGet dependencies for GpssConsole
+        if: steps.check_upstream.outputs.changed == 'true'
         run: nuget restore ${{ github.workspace }}/GpssConsole/GpssConsole.sln -NoCache
         
       - name: Build GpssConsole.csproj
+        if: steps.check_upstream.outputs.changed == 'true'
         run: |
           msbuild ${{ github.workspace }}/GpssConsole/GpssConsole.csproj /p:Configuration=Release /p:Platform="Any CPU"
         continue-on-error: true
         id: GpssConsole-build
         
       - name: Commit and Push DLLs
-        if: steps.GpssConsole-build.outcome == 'success'
+        if: steps.check_upstream.outputs.changed == 'true' && steps.GpssConsole-build.outcome == 'success'
         shell: bash
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add GpssConsole/deps/PKHeX.Core.dll GpssConsole/deps/PKHeX.Core.AutoMod.dll
+          
+          # Add the tracking file alongside the DLLs so it remembers for next time
+          git add GpssConsole/deps/PKHeX.Core.dll GpssConsole/deps/PKHeX.Core.AutoMod.dll GpssConsole/deps/upstream_shas.txt
+          
           if git diff --staged --quiet; then
             echo "No DLL updates found. Skipping commit."
           else
-            git commit -m "chore: Update PKHeX.Core.dll and PKHeX.Core.AutoMod.dll"
-            git push origin HEAD:${{ github.event.repository.default_branch }}
+            git commit -m "chore: Update PKHeX DLLs and tracking SHAs"
+            git push origin HEAD:master
           fi
