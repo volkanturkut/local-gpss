@@ -26,14 +26,16 @@ jobs:
           PKHEX_SHA=$(git ls-remote https://github.com/kwsch/PKHeX.git refs/heads/master | awk '{ print $1}')
           PLUGINS_SHA=$(git ls-remote https://github.com/santacrab2/PKHeX-Plugins.git refs/heads/cherrytree | awk '{ print $1}')
           
-          NEW_SHAS="${PKHEX_SHA}_${PLUGINS_SHA}"
+          # Strip any invisible characters (like Windows \r) to prevent false positives
+          NEW_SHAS=$(echo "${PKHEX_SHA}_${PLUGINS_SHA}" | tr -d '\r\n ')
           echo "Latest upstream SHAs: $NEW_SHAS"
           
           mkdir -p GpssConsole/deps
           
           # 2. Compare against the tracking file from the last successful build
           if [ -f "GpssConsole/deps/upstream_shas.txt" ]; then
-            OLD_SHAS=$(cat GpssConsole/deps/upstream_shas.txt)
+            # Strip invisible characters from the saved file as well
+            OLD_SHAS=$(cat GpssConsole/deps/upstream_shas.txt | tr -d '\r\n ')
             if [ "$OLD_SHAS" == "$NEW_SHAS" ]; then
               echo "No upstream changes detected. Stopping workflow."
               echo "changed=false" >> $GITHUB_OUTPUT
@@ -127,10 +129,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Add the tracking file alongside the DLLs so it remembers for next time
           git add GpssConsole/deps/PKHeX.Core.dll GpssConsole/deps/PKHeX.Core.AutoMod.dll GpssConsole/deps/upstream_shas.txt
-          
           if git diff --staged --quiet; then
             echo "No DLL updates found. Skipping commit."
           else
